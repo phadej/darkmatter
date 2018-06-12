@@ -107,7 +107,9 @@ projectFiles = do
         cfg' <- either fail pure $ projectFile v cfg
         if null cfg' then return Nothing else do
             let fn = projectFileName v
-            let bs = PP.render (prettyFields cfg') ++ "\n"
+            let cfg'' = cfg' ++ [ Field (Name zeroPos "with-compiler") [FieldLine zeroPos $ "ghc-" <> fromString (prettyShow v) ]
+                        ]
+            let bs = PP.render (prettyFields cfg'') ++ "\n"
             writeFile fn bs
             return (Just v)
 
@@ -130,9 +132,7 @@ prettyFields = PP.vcat . map go where
     goFls' (FieldLine _ann bs) = PP.text (BS8.unpack bs)
 
 projectFile :: Version -> [Field Position] -> Either String [Field Position]
-projectFile v [] = pure
-    [ Field (Name zeroPos "with-compiler") [FieldLine zeroPos $ "ghc-" <> fromString (prettyShow v) ]
-    ]
+projectFile v [] = Right []
 projectFile v (f@Field {} : fs) = (f :) <$> projectFile v fs
 projectFile v (Section n@(Name _ann name) args gs : fs)
     | name == "if" = do
