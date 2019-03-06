@@ -22,8 +22,8 @@ library
   build-depends:
     base                 ^>= 4.11,
     bytestring,
-    Cabal                ^>= 2.2.0.1,
-    cabal-plan           ^>= 0.3.0.0,
+    Cabal                ^>= 2.4.1.0,
+    cabal-plan           ^>= 0.5.0.0,
     makefile             ^>= 1.1.0.0,
     optparse-applicative ^>= 0.14.0.0,
     pretty, 
