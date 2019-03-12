@@ -27,8 +27,6 @@ import qualified Text.PrettyPrint      as PP
 
 -- import qualified Options.Applicative as O
 
-import Debug.Trace
-
 ghcVersions :: [Version]
 ghcVersions = map mkVersion
     [ [7,0,4]
@@ -46,22 +44,36 @@ ghcVersions = map mkVersion
 makeMakefile :: [Version] -> MF.Makefile
 makeMakefile vs = MF.Makefile
     $ pfEntry
+    : makefileEntry
     : buildEntry
     : testEntry
+    : testBuildEntry
+    : testDryEntry
     : depsEntry
     : sortOn entryTarget (concatMap go vs)
   where
     pfEntry :: MF.Entry
     pfEntry = MF.Rule "project-files" (map projectFileName vs) []
 
+    makefileEntry :: MF.Entry
+    makefileEntry = MF.Rule "Makefile" ["cabal.darkmatter"]
+        [ MF.Command "darkmatter > Makefile"
+        ]
+
     buildEntry :: MF.Entry
     buildEntry = MF.Rule "build" (map (\v -> fromString $ "build-" ++ prettyShow v) vs) []
 
+    testDryEntry :: MF.Entry
+    testDryEntry = MF.Rule "test-dry" (map (\v -> fromString $ "test-dry-" ++ prettyShow v) vs) []
+
+    testBuildEntry :: MF.Entry
+    testBuildEntry = MF.Rule "test-build" ("test-dry" : map (\v -> fromString $ "test-build-" ++ prettyShow v) vs) []
+
     testEntry :: MF.Entry
-    testEntry = MF.Rule "test" (map (\v -> fromString $ "test-" ++ prettyShow v) vs) []
+    testEntry = MF.Rule "test" ("test-build" : map (\v -> fromString $ "test-" ++ prettyShow v) vs) []
 
     depsEntry :: MF.Entry
-    depsEntry = MF.Rule "deps" (map (\v -> fromString $ "deps." ++ prettyShow v ++ ".png") vs) []
+    depsEntry = MF.Rule "deps" (map (\v -> fromString $ "deps-" ++ prettyShow v ++ ".png") vs) []
 
     go :: Version -> [MF.Entry]
     go v =
@@ -75,13 +87,18 @@ makeMakefile vs = MF.Makefile
         , MF.Rule (MF.Target $ "build-" <> vt) [projectFileName v]
             [ MF.Command $ "cabal new-build --builddir=" <> bdir <> " --project-file " <> projectFileName v <> " -w ghc-" <> vt <> " --disable-tests --disable-benchmarks all"
             ]
-        , MF.Rule (MF.Target $ "test-" <> vt) [projectFileName v]
-            [ MF.Command $ "cabal new-build --builddir=" <> bdir <> " --project-file " <> projectFileName v <> " -w ghc-" <> vt <> " --enable-tests --disable-benchmarks all"
-            , MF.Command $ "cabal new-test --builddir=" <> bdir <> " --project-file " <> projectFileName v <> " -w ghc-" <> vt <> " --enable-tests --disable-benchmarks all"
+        , MF.Rule (MF.Target $ "test-dry-" <> vt) [projectFileName v]
+            [ MF.Command $ "cabal new-build --builddir=" <> bdir <> " --project-file " <> projectFileName v <> " -w ghc-" <> vt <> " --enable-tests --enable-benchmarks --dry all"
+            ]
+        , MF.Rule (MF.Target $ "test-build-" <> vt) [projectFileName v, MF.Dependency $ "test-dry-" <> vt]
+            [ MF.Command $ "cabal new-build --builddir=" <> bdir <> " --project-file " <> projectFileName v <> " -w ghc-" <> vt <> " --enable-tests --enable-benchmarks all"
+            ]
+        , MF.Rule (MF.Target $ "test-" <> vt) [projectFileName v, MF.Dependency $ "test-build-" <> vt]
+            [ MF.Command $ "cabal new-test --builddir=" <> bdir <> " --project-file " <> projectFileName v <> " -w ghc-" <> vt <> " --enable-tests --enable-benchmarks all"
             ]
         ]
       where
-        depsPng = "deps." <> vt <> ".png"
+        depsPng = "deps-" <> vt <> ".png"
         bdir = "dist-newstyle-" <> vt
 
         vt = fromString (prettyShow v)
@@ -133,7 +150,7 @@ prettyFields = PP.vcat . map go where
     goFls' (FieldLine _ann bs) = PP.text (BS8.unpack bs)
 
 projectFile :: Version -> [Field Position] -> Either String [Field Position]
-projectFile v [] = Right []
+projectFile _ [] = Right []
 projectFile v (f@Field {} : fs) = (f :) <$> projectFile v fs
 projectFile v (Section n@(Name _ann name) args gs : fs)
     | name == "if" = do
