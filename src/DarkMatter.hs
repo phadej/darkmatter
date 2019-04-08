@@ -2,28 +2,26 @@
 module DarkMatter (main) where
 
 import Data.Bifunctor                  (first)
+import Data.List                       (sortOn)
 import Data.Maybe                      (catMaybes)
 import Data.String                     (IsString (..))
 import Data.Traversable                (for)
 import Distribution.Compiler           (CompilerFlavor (..))
+import Distribution.Fields
+       (Field (..), FieldLine (..), Name (..), fromParsecFields, readFields,
+       showFields, runParseResult)
+import Distribution.Fields.ConfVar     (parseConditionConfVar)
 import Distribution.PackageDescription (ConfVar (..))
-import Distribution.Parsec.Common      (Position, showPError, zeroPos)
-import Distribution.Parsec.ConfVar     (parseConditionConfVar)
-import Distribution.Parsec.Parser
-       (Field (..), FieldLine (..), Name (..), readFields)
-import Data.List (sortOn)
-import Distribution.Parsec.ParseResult (runParseResult)
+import Distribution.Parsec             (Position, showPError, zeroPos)
 import Distribution.Pretty             (prettyShow)
 import Distribution.Types.Condition    (Condition (..), simplifyCondition)
 import Distribution.Version
 
 import qualified Data.ByteString       as BS
-import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Makefile         as MF
 import qualified Data.Makefile.Render  as MF
 import qualified Data.Text             as T
 import qualified Data.Text.Lazy.IO     as TL
-import qualified Text.PrettyPrint      as PP
 
 -- import qualified Options.Applicative as O
 
@@ -39,6 +37,7 @@ ghcVersions = map mkVersion
     , [8,2,2]
     , [8,4,4]
     , [8,6,4]
+    , [8,8,1]
     ]
 
 makeMakefile :: [Version] -> MF.Makefile
@@ -82,7 +81,7 @@ makeMakefile vs = MF.Makefile
             ]
         , MF.Rule (MF.Target depsPng) [projectFileName v]
             [ MF.Command $ "cabal new-build --builddir=" <> bdir <> " --project-file " <> projectFileName v <> " -w ghc-" <> vt <> " --disable-tests --disable-benchmarks all --dry-run"
-            , MF.Command $ "cabal-plan --builddir=" <> bdir <> " --hide-builtin --hide-global dot --tred --tred-weights | dot -Tpng -o" <> depsPng
+            , MF.Command $ "cabal-plan --hide-builtin --hide-global dot --builddir=" <> bdir <> " --tred --tred-weights | dot -Tpng -o" <> depsPng
             ]
         , MF.Rule (MF.Target $ "build-" <> vt) [projectFileName v]
             [ MF.Command $ "cabal new-build --builddir=" <> bdir <> " --project-file " <> projectFileName v <> " -w ghc-" <> vt <> " --disable-tests --disable-benchmarks all"
@@ -127,7 +126,7 @@ projectFiles = do
             let fn = projectFileName v
             let cfg'' = cfg' ++ [ Field (Name zeroPos "with-compiler") [FieldLine zeroPos $ "ghc-" <> fromString (prettyShow v) ]
                         ]
-            let bs = PP.render (prettyFields cfg'') ++ "\n"
+            let bs = showFields (const []) $ fromParsecFields cfg''
             writeFile fn bs
             return (Just v)
 
@@ -136,18 +135,7 @@ projectFiles = do
 
     TL.putStr mf'
 
-prettyFields :: [Field ann] -> PP.Doc
-prettyFields = PP.vcat . map go where
-    go :: Field ann -> PP.Doc
-    go (Field (Name _ann name) fls) =
-        PP.text (BS8.unpack name) PP.<> PP.colon PP.<+> goFls fls
-    go (Section _ _ _) = PP.empty -- TODO
 
-    goFls :: [FieldLine ann] -> PP.Doc
-    goFls = PP.vcat . map goFls'
-
-    goFls' :: FieldLine ann -> PP.Doc
-    goFls' (FieldLine _ann bs) = PP.text (BS8.unpack bs)
 
 projectFile :: Version -> [Field Position] -> Either String [Field Position]
 projectFile _ [] = Right []
