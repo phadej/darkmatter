@@ -2,26 +2,30 @@
 module DarkMatter (main) where
 
 import Data.Bifunctor                  (first)
-import Data.List                       (sortOn)
+import Data.Char                       (isSpace)
+import Data.List                       (foldl', sortOn)
 import Data.Maybe                      (catMaybes)
 import Data.String                     (IsString (..))
 import Data.Traversable                (for)
 import Distribution.Compiler           (CompilerFlavor (..))
 import Distribution.Fields
-       (Field (..), FieldLine (..), Name (..), fromParsecFields, readFields,
-       showFields, runParseResult)
+       (Field (..), FieldLine (..), Name (..), SectionArg, fromParsecFields,
+       readFields, runParseResult, showFields)
 import Distribution.Fields.ConfVar     (parseConditionConfVar)
+import Distribution.Fields.Field       (fieldLineAnn)
 import Distribution.PackageDescription (ConfVar (..))
 import Distribution.Parsec             (Position, showPError, zeroPos)
+import Distribution.Parsec.Position
 import Distribution.Pretty             (prettyShow)
+import Distribution.Simple.Utils       (fromUTF8BS)
 import Distribution.Types.Condition    (Condition (..), simplifyCondition)
 import Distribution.Version
 
-import qualified Data.ByteString       as BS
-import qualified Data.Makefile         as MF
-import qualified Data.Makefile.Render  as MF
-import qualified Data.Text             as T
-import qualified Data.Text.Lazy.IO     as TL
+import qualified Data.ByteString      as BS
+import qualified Data.Makefile        as MF
+import qualified Data.Makefile.Render as MF
+import qualified Data.Text            as T
+import qualified Data.Text.Lazy       as TL
 
 -- import qualified Options.Applicative as O
 
@@ -120,8 +124,10 @@ projectFiles = do
     contents <- BS.readFile "cabal.darkmatter"
     cfg <- either (fail . show) pure $ readFields contents
 
+    ProjectFile _ extraMakefile <- either fail pure $ projectFile (head ghcVersions) cfg
+
     vs <- for ghcVersions $ \v -> do
-        cfg' <- either fail pure $ projectFile v cfg
+        ProjectFile cfg' _ <- either fail pure $ projectFile v cfg
         if null cfg' then return Nothing else do
             let fn = projectFileName v
             let cfg'' = cfg' ++ [ Field (Name zeroPos "with-compiler") [FieldLine zeroPos $ "ghc-" <> fromString (prettyShow v) ]
@@ -130,16 +136,42 @@ projectFiles = do
             writeFile fn bs
             return (Just v)
 
-    let mf  = makeMakefile (catMaybes vs)
-    let mf' = MF.encodeMakefile mf
+    let mf1  = makeMakefile (catMaybes vs)
+    let mf2 = MF.encodeMakefile mf1
+    let mf3 = TL.unpack mf2
 
-    TL.putStr mf'
+    putStr $ mf3 ++ unlines (map processMakefileLine $ concatMap lines extraMakefile)
 
+processMakefileLine :: String -> String
+processMakefileLine (c : cs) | isSpace c = '\t' : dropWhile isSpace cs
+processMakefileLine cs = cs
 
+data ProjectFile = ProjectFile
+    { pfFields   :: [Field Position]
+    , pfMakefile :: [String]
+    }
 
-projectFile :: Version -> [Field Position] -> Either String [Field Position]
-projectFile _ [] = Right []
-projectFile v (f@Field {} : fs) = (f :) <$> projectFile v fs
+emptyProjectFile :: ProjectFile
+emptyProjectFile = ProjectFile [] []
+
+pfAddField :: Field Position -> ProjectFile -> ProjectFile
+pfAddField f pf = pf { pfFields = f : pfFields pf }
+
+pfAddMakefile :: String -> ProjectFile -> ProjectFile
+pfAddMakefile s pf = pf { pfMakefile = s : pfMakefile pf }
+
+pfSection :: Name Position -> [SectionArg Position] -> ProjectFile -> ProjectFile -> ProjectFile
+pfSection n args x y = ProjectFile
+    { pfFields   = Section n args (pfFields x) : pfFields y
+    , pfMakefile = pfMakefile x ++ pfMakefile y
+    }
+
+projectFile :: Version -> [Field Position] -> Either String ProjectFile
+projectFile _ [] = Right emptyProjectFile
+projectFile v (Field (Name pos name) fls : fs)
+    | name == "makefile" =
+        pfAddMakefile (fieldlinesToFreeText3 pos fls) <$> projectFile v fs
+projectFile v (f@Field {} : fs) = pfAddField f <$> projectFile v fs
 projectFile v (Section n@(Name _ann name) args gs : fs)
     | name == "if" = do
         c <- toEither $ runParseResult $ parseConditionConfVar args
@@ -151,7 +183,7 @@ projectFile v (Section n@(Name _ann name) args gs : fs)
     | otherwise = do
         gs' <- projectFile v gs
         fs' <- projectFile v fs
-        return $ Section n args gs' : fs'
+        return $ pfSection n args gs' fs'
   where
     toEither = first (unlines . map (showPError "-") . snd) . snd
 
@@ -161,3 +193,45 @@ projectFile v (Section n@(Name _ann name) args gs : fs)
 
 main :: IO ()
 main = projectFiles
+
+-------------------------------------------------------------------------------
+-- from Cabal
+-------------------------------------------------------------------------------
+
+fieldlinesToFreeText3 :: Position -> [FieldLine Position] -> String
+fieldlinesToFreeText3 _   []               = ""
+fieldlinesToFreeText3 _   [FieldLine _ bs] = fromUTF8BS bs
+fieldlinesToFreeText3 pos (FieldLine pos1 bs1 : fls2@(FieldLine pos2 _ : _))
+    -- if first line is on the same line with field name:
+    -- the indentation level is either
+    -- 1. the indentation of left most line in rest fields
+    -- 2. the indentation of the first line
+    -- whichever is leftmost
+    | positionRow pos == positionRow pos1 = concat
+        $ fromUTF8BS bs1
+        : mealy (mk mcol1) pos1 fls2
+
+    -- otherwise, also indent the first line
+    | otherwise = concat
+        $ replicate (positionCol pos1 - mcol2) ' '
+        : fromUTF8BS bs1
+        : mealy (mk mcol2) pos1 fls2
+  where
+    mcol1 = foldl' (\a b -> min a $ positionCol $ fieldLineAnn b) (min (positionCol pos1) (positionCol pos2)) fls2
+    mcol2 = foldl' (\a b -> min a $ positionCol $ fieldLineAnn b) (positionCol pos1) fls2
+
+    mk :: Int -> Position -> FieldLine Position -> (Position, String)
+    mk col p (FieldLine q bs) =
+        ( q
+        , replicate newlines '\n'
+          ++ replicate indent ' '
+          ++ fromUTF8BS bs
+        )
+      where
+        newlines = positionRow q - positionRow p
+        indent   = positionCol q - col
+
+mealy :: (s -> a -> (s, b)) -> s -> [a] -> [b]
+mealy f = go where
+    go _ [] = []
+    go s (x : xs) = let ~(s', y) = f s x in y : go s' xs

@@ -1,7 +1,7 @@
 all :  build
 
 build : 
-	cabal new-build -w ghc-8.4.4
+	cabal v2-build -w ghc-8.4.4
 
-install : build
-	cp `cabal-plan list-bin darkmatter` ~/.local/bin
+install :
+	cabal v2-install -w ghc-8.4.4 --overwrite-policy=always
