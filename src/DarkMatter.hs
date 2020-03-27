@@ -41,7 +41,8 @@ ghcVersions = map mkVersion
     , [8,2,2]
     , [8,4,4]
     , [8,6,5]
-    , [8,8,1]
+    , [8,8,3]
+    , [8,10,1]
     ]
 
 makeMakefile :: [Version] -> MF.Makefile

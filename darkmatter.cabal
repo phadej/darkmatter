@@ -1,6 +1,6 @@
 cabal-version:       2.2
 name:                darkmatter
-version:             0.20190831
+version:             0.20200327
 
 synopsis:            Dark Matter keeps holds the universe together.
 category:            Development
