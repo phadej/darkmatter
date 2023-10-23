@@ -92,6 +92,7 @@ makeMakefile vs = MF.Makefile
         , MF.Rule (MF.Target depsPng) [projectFileName v]
             [ MF.Command $ "cabal new-build --builddir=" <> bdir <> " --project-file " <> projectFileName v <> " -w ghc-" <> vt <> " --disable-tests --disable-benchmarks all --dry-run"
             , MF.Command $ "cabal-plan --hide-builtin --hide-global dot --builddir=" <> bdir <> " --tred --tred-weights | dot -Tpng -o" <> depsPng
+            , MF.Command $ "cabal-plan topo --builddir=" <> bdir <> " | sort > " <> depsTxt
             ]
         , MF.Rule (MF.Target $ "build-" <> vt) [projectFileName v]
             [ MF.Command $ "cabal new-build --builddir=" <> bdir <> " --project-file " <> projectFileName v <> " -w ghc-" <> vt <> " --disable-tests --disable-benchmarks all"
@@ -108,6 +109,7 @@ makeMakefile vs = MF.Makefile
         ]
       where
         depsPng = "deps-" <> vt <> ".png"
+        depsTxt = "deps-" <> vt <> ".txt"
         bdir = "dist-newstyle-" <> vt
 
         vt = fromString (prettyShow v)
